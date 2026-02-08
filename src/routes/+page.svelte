@@ -6,6 +6,34 @@
     // Extract keys dynamically from the first row
     let headers = $derived(result.length > 0 ? Object.keys(result[0]) : []);
 
+    // Calculate rowspans for cells with empty cells below them
+    let rowSpans = $derived(calculateRowSpans(result, headers));
+
+    function calculateRowSpans(
+        data: Record<string, any>[],
+        cols: string[],
+    ): number[][] {
+        const spans: number[][] = [];
+        for (let i = 0; i < data.length; i++) {
+            spans[i] = [];
+            for (let col = 0; col < cols.length; col++) {
+                const value = data[i][cols[col]];
+                if (!value) {
+                    spans[i][col] = 0;
+                } else {
+                    let count = 1;
+                    while (
+                        i + count < data.length &&
+                        !data[i + count][cols[col]]
+                    ) {
+                        count++;
+                    }
+                    spans[i][col] = count;
+                }
+            }
+        }
+        return spans;
+    }
     function handleFileUpload(event: Event) {
         const input = event.target as HTMLInputElement;
         const file = input.files?.[0];
@@ -56,10 +84,17 @@
             <tbody>
                 {#each result as row, i}
                     <tr class="hover:bg-gray-50">
-                        {#each headers as header}
-                            <td class="border border-gray-300 px-4 py-2">
-                                {row[header]}
-                            </td>
+                        {#each headers as header, j}
+                            {#if rowSpans[i]?.[j] > 0}
+                                <td
+                                    class="border border-gray-300 px-4 py-2"
+                                    rowspan={rowSpans[i][j] > 1
+                                        ? rowSpans[i][j]
+                                        : undefined}
+                                >
+                                    {row[header]}
+                                </td>
+                            {/if}
                         {/each}
                     </tr>
                 {/each}
