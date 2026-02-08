@@ -1,19 +1,24 @@
 <script lang="ts">
-    type DataRow = {
-        Classification: string;
-        Type: string;
-        Name: string;
-    };
-    import Papa from "papaparse";
-    let result = $state<DataRow[] | null>(null);
+    import Papa, { type ParseResult } from "papaparse";
+
+    let result = $state<Record<string, any>[]>([]);
+
+    // Extract keys dynamically from the first row
+    let headers = $derived(result.length > 0 ? Object.keys(result[0]) : []);
+
     function handleFileUpload(event: Event) {
         const input = event.target as HTMLInputElement;
         const file = input.files?.[0];
-        const papa = Papa.parse(file, {
+
+        if (!file) return;
+
+        Papa.parse(file, {
             header: true,
             skipEmptyLines: true,
+            complete: (papa: ParseResult<Record<string, any>>) => {
+                result = papa.data;
+            },
         });
-        result = papa.data as DataRow[];
     }
 </script>
 
@@ -27,6 +32,7 @@
             >Upload CSV</label
         >
         <input
+            id="file"
             type="file"
             accept=".csv"
             onchange={handleFileUpload}
@@ -38,21 +44,21 @@
         <table class="min-w-full border-collapse border border-gray-300">
             <thead>
                 <tr class="bg-gray-100">
-                    {#each result as column}
+                    {#each headers as header}
                         <th
                             class="border border-gray-300 px-4 py-2 text-left font-semibold"
                         >
-                            {column}
+                            {header}
                         </th>
                     {/each}
                 </tr>
             </thead>
             <tbody>
-                {#each result as row}
+                {#each result as row, i}
                     <tr class="hover:bg-gray-50">
-                        {#each result as column}
+                        {#each headers as header}
                             <td class="border border-gray-300 px-4 py-2">
-                                {column}
+                                {row[header]}
                             </td>
                         {/each}
                     </tr>
