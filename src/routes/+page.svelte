@@ -50,9 +50,9 @@
             <tbody>
                 {#each result as row}
                     <tr class="hover:bg-gray-50">
-                        {#each columns as column}
+                        {#each result as column}
                             <td class="border border-gray-300 px-4 py-2">
-                                {row[column]}
+                                {column}
                             </td>
                         {/each}
                     </tr>
