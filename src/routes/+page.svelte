@@ -51,7 +51,7 @@
 </script>
 
 <div class="p-8 max-w-4xl mx-auto">
-    <h1 class="text-3xl font-bold mb-6">Blurry Spreadsheet Viewer</h1>
+    <h1 class="text-3xl font-bold mb-6">Table Viewer</h1>
     <!-- File Input -->
     <div
         class="mb-8 p-6 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center"
@@ -87,10 +87,11 @@
                         {#each headers as header, j}
                             {#if rowSpans[i]?.[j] > 0}
                                 <td
-                                    class="border border-gray-300 px-4 py-2"
+                                    class="border border-gray-300 px-4 py-2 {j > 0 ? 'blur-sm' : ''} cursor-pointer transition-all duration-200"
                                     rowspan={rowSpans[i][j] > 1
                                         ? rowSpans[i][j]
                                         : undefined}
+                                    onclick={(e) => j > 0 && e.currentTarget.classList.remove('blur-sm')}
                                 >
                                     {row[header]}
                                 </td>
