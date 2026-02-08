@@ -44,6 +44,5 @@ jobs:
             docker pull ghcr.io/adriantwill/table-viewer@${{ needs.build-push.outputs.digest }}
             docker stop table-viewer || true
             docker rm table-viewer || true
-            docker run -d --name table-viewer -p 3002:3002 --restart unless-stopped \
-              ghcr.io/adriantwill/table-viewer@${{ needs.build-push.outputs.digest }}
+            docker run -d --name table-viewer -p 3002:3002 --restart unless-stopped ghcr.io/adriantwill/table-viewer@${{ needs.build-push.outputs.digest }}
             docker image prune -af
