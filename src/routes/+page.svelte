@@ -1,100 +1,194 @@
 <script lang="ts">
-    import Papa, { type ParseResult } from "papaparse";
-    import Pencil from "lucide-svelte/icons/pencil";
+    import * as XLSX from "xlsx";
+    import { Trash, Pencil } from "lucide-svelte";
 
-    let result = $state<Record<string, any>[]>([]);
+    interface CellData {
+        value: string;
+        rowspan?: number;
+        skip?: boolean;
+    }
 
-    // Extract keys dynamically from the first row
-    let headers = $derived(result.length > 0 ? Object.keys(result[0]) : []);
-    let revealed = $state(new Set<string>());
+    let result = $state<CellData[][]>([]);
+    let headers = $state<string[]>([]);
+    let blurred = $state(new Set<string>());
     let editingCell = $state<string | null>(null);
 
     function toggleReveal(i: number, j: number) {
         const key = `${i}-${j}`;
-        const newRevealed = new Set(revealed);
-        if (newRevealed.has(key)) {
-            newRevealed.delete(key);
+        const newblurred = new Set(blurred);
+        if (newblurred.has(key)) {
+            newblurred.delete(key);
         } else {
-            newRevealed.add(key);
+            newblurred.add(key);
         }
-        revealed = newRevealed;
+        blurred = newblurred;
     }
-    // Calculate rowspans for cells with empty cells below them
-    let rowSpans = $derived(calculateRowSpans(result, headers));
 
-    function calculateRowSpans(
-        data: Record<string, any>[],
-        cols: string[],
-    ): number[][] {
-        const spans: number[][] = [];
-        for (let i = 0; i < data.length; i++) {
-            spans[i] = [];
-            for (let col = 0; col < cols.length; col++) {
-                const value = data[i][cols[col]];
-                if (!value) {
-                    spans[i][col] = 0;
-                } else {
-                    let count = 1;
-                    while (
-                        i + count < data.length &&
-                        !data[i + count][cols[col]]
-                    ) {
-                        count++;
-                    }
-                    spans[i][col] = count;
+    function unblurAll() {
+        blurred = new Set();
+    }
+
+    function blurAll() {
+        const newblurred = new Set<string>();
+        for (let i = 0; i < result.length; i++) {
+            for (let j = 0; j < headers.length; j++) {
+                if (!result[i][j]?.skip) {
+                    newblurred.add(`${i}-${j}`);
                 }
             }
         }
-        return spans;
+        blurred = newblurred;
     }
-    function handleFileUpload(event: Event) {
+
+    function trimTrailingEmptyColumnsAndRows(data: CellData[][]): CellData[][] {
+        if (data.length === 0) return data;
+
+        // Find last column with data (check all rows)
+        let lastColWithData = data[0].length - 1;
+        while (lastColWithData >= 0) {
+            const hasDataInColumn = data.some(
+                (row) =>
+                    row[lastColWithData]?.value !== undefined &&
+                    row[lastColWithData]?.value !== null &&
+                    row[lastColWithData]?.value !== "",
+            );
+            if (hasDataInColumn) break;
+            lastColWithData--;
+        }
+
+        // Trim columns in all rows
+        const trimmedCols = data.map((row) =>
+            row.slice(0, lastColWithData + 1),
+        );
+
+        for (let i = trimmedCols.length - 1; i >= 0; i--) {
+            if (
+                !trimmedCols[i].some(
+                    (cell) =>
+                        cell?.value !== undefined &&
+                        cell?.value !== null &&
+                        cell?.value !== "",
+                )
+            ) {
+                trimmedCols.splice(i, 1);
+            }
+        }
+
+        return trimmedCols;
+    }
+
+    function processSheetWithMerges(worksheet: XLSX.WorkSheet): CellData[][] {
+        const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
+        const merges = worksheet["!merges"] || [];
+
+        const data: CellData[][] = [];
+
+        for (let row = range.s.r; row <= range.e.r; row++) {
+            const rowData: CellData[] = [];
+            for (let col = range.s.c; col <= range.e.c; col++) {
+                const cellRef = XLSX.utils.encode_cell({ r: row, c: col });
+                const cell = worksheet[cellRef];
+                rowData.push({
+                    value: cell ? cell.w : "",
+                    skip: false,
+                });
+            }
+            data.push(rowData);
+        }
+
+        for (const merge of merges) {
+            const startRow = merge.s.r;
+            const endRow = merge.e.r;
+            const col = merge.s.c;
+            const rowspan = endRow - startRow + 1;
+
+            if (data[startRow] && data[startRow][col]) {
+                data[startRow][col].rowspan = rowspan;
+            }
+
+            for (let r = startRow + 1; r <= endRow; r++) {
+                if (data[r] && data[r][col]) {
+                    data[r][col].skip = true;
+                }
+            }
+        }
+
+        return trimTrailingEmptyColumnsAndRows(data);
+    }
+
+    async function handleFileUpload(event: Event) {
         const input = event.target as HTMLInputElement;
         const file = input.files?.[0];
 
         if (!file) return;
 
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            complete: (papa: ParseResult<Record<string, any>>) => {
-                result = papa.data;
-                const newRevealed = new Set<string>();
-                for (let i = 0; i < result.length; i++) {
-                    newRevealed.add(`${i}-${0}`);
-                }
-                revealed = newRevealed;
-                console.log(result);
-            },
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+
+        const jsonData = XLSX.utils.sheet_to_json<
+            (string | number | boolean | undefined)[]
+        >(firstSheet, {
+            header: 1,
         });
+
+        if (jsonData.length > 0) {
+            headers = jsonData[0].map((h) => String(h));
+            result = processSheetWithMerges(firstSheet).slice(1);
+        }
+
+        const newblurred = new Set<string>();
+        for (let i = 0; i < result.length; i++) {
+            for (let j = 1; j < headers.length; j++) {
+                if (!result[i][j]?.skip) {
+                    newblurred.add(`${i}-${j}`);
+                }
+            }
+        }
+        blurred = newblurred;
     }
 </script>
 
-<div class="p-8 max-w-4xl mx-auto bg-surface text-text-main min-h-screen">
+<div class="p-10 mx-auto bg-surface text-text-main min-h-screen">
     <h1 class="text-3xl font-bold mb-6">Table Viewer</h1>
     <!-- File Input -->
     <div
-        class="mb-8 p-6 bg-surface-alt rounded-lg border border-dashed border-border-default text-center"
+        class="mb-8 p-6 bg-surface-alt rounded-sm border border-dashed border-border-default text-center"
     >
         <label for="file" class="block text-lg font-medium mb-2 text-text-main"
-            >Upload CSV</label
+            >Upload XLSX</label
         >
         <input
             id="file"
             type="file"
-            accept=".csv"
+            accept=".xlsx"
             onchange={handleFileUpload}
             class="mx-auto text-text-muted file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-surface-header file:text-text-main hover:file:bg-border-default cursor-pointer"
         />
     </div>
+
+    <div class="mb-4 flex gap-2">
+        <button
+            class="bg-surface-header hover:bg-surface-alt border border-border-default px-4 py-2 rounded-sm text-sm font-semibold transition-colors"
+            onclick={blurAll}
+        >
+            Blur All
+        </button>
+        <button
+            class="bg-surface-header hover:bg-surface-alt border border-border-default px-4 py-2 rounded-sm text-sm font-semibold transition-colors"
+            onclick={unblurAll}
+        >
+            Unblur All
+        </button>
+    </div>
+
     <!-- The Table -->
     <div class="overflow-x-auto">
-        <table class="min-w-full border-collapse border border-border-default">
+        <table class="min-w-full border-collapse">
             <thead>
                 <tr class="bg-surface-header">
                     {#each headers as header}
-                        <th
-                            class="border border-border-default px-4 py-2 text-left font-semibold"
-                        >
+                        <th class=" px-4 py-2 text-left font-semibold">
                             {header}
                         </th>
                     {/each}
@@ -102,36 +196,60 @@
             </thead>
             <tbody>
                 {#each result as row, i}
-                    <tr class="">
-                        {#each headers as header, j}
-                            {#if rowSpans[i]?.[j] > 0}
+                    <tr class="border-b border-base px-3 py-4">
+                        {#each row as cell, j}
+                            {#if !cell.skip}
                                 <td
-                                    class="relative hover:bg-surface-alt border border-border-default px-4 py-2 transition-all duration-200 {!revealed.has(
+                                    rowspan={cell.rowspan || 1}
+                                    class="group h-20 relative px-4 py-2 transition-all duration-200 align-middle {blurred.has(
                                         `${i}-${j}`,
                                     )
                                         ? 'blur-sm'
                                         : ''}"
-                                    rowspan={rowSpans[i][j] > 1
-                                        ? rowSpans[i][j]
-                                        : undefined}
                                     onclick={() => toggleReveal(i, j)}
                                 >
-                                    {#if revealed.has(`${i}-${j}`)}
-                                        <button
-                                            class="absolute top-1 right-1 z-10"
-                                            onclick={(e) => {
-                                                e.stopPropagation();
-                                                editingCell =
-                                                    editingCell === `${i}-${j}`
-                                                        ? null
-                                                        : `${i}-${j}`;
-                                            }}
+                                    {#if !blurred.has(`${i}-${j}`)}
+                                        <div
+                                            class="absolute top-2 right-2 z-10 group-hover:opacity-100 opacity-0 transition-opacity duration-300 ease-in-out"
                                         >
-                                            <Pencil
-                                                size={14}
-                                                class="text-gray-400"
-                                            />
-                                        </button>
+                                            <button
+                                                class="cursor-pointer"
+                                                onclick={(e) => {
+                                                    e.stopPropagation();
+                                                    editingCell =
+                                                        editingCell ===
+                                                        `${i}-${j}`
+                                                            ? null
+                                                            : `${i}-${j}`;
+                                                }}
+                                            >
+                                                <Pencil
+                                                    size={20}
+                                                    class="text-gray-400"
+                                                />
+                                            </button>
+                                            {#if j === 0}
+                                                <button
+                                                    class="cursor-pointer"
+                                                    onclick={(e) => {
+                                                        e.stopPropagation();
+                                                        result = result.filter(
+                                                            (_, idx) =>
+                                                                idx < i ||
+                                                                idx >=
+                                                                    i +
+                                                                        (cell.rowspan ||
+                                                                            1),
+                                                        );
+                                                    }}
+                                                >
+                                                    <Trash
+                                                        size={20}
+                                                        class="text-gray-400"
+                                                    />
+                                                </button>
+                                            {/if}
+                                        </div>
                                     {/if}
                                     {#if editingCell === `${i}-${j}`}
                                         <input
@@ -139,7 +257,7 @@
                                                 e.stopPropagation();
                                             }}
                                             type="text"
-                                            bind:value={row[header]}
+                                            bind:value={cell.value}
                                             class="w-full bg-transparent text-text-main focus:outline-none"
                                             autofocus
                                             onblur={() => (editingCell = null)}
@@ -150,7 +268,7 @@
                                             }}
                                         />
                                     {:else}
-                                        {row[header]}
+                                        {cell.value}
                                     {/if}
                                 </td>
                             {/if}
